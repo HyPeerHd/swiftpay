@@ -1,8 +1,8 @@
 <?php
 // Configuración específica para Tor
-if (isset($_SERVER['HTTP_X_FORWARDED_PROTO']) && $_SERVER['HTTP_X_FORWARDED_PROTO'] === 'https') {
-    $_SERVER['HTTPS'] = 'on';
-}
+//if (isset($_SERVER['HTTP_X_FORWARDED_PROTO']) && $_SERVER['HTTP_X_FORWARDED_PROTO'] === 'https') {
+//    $_SERVER['HTTPS'] = 'on';
+//}
 
 
 // Configuración de tiempo para Tor (conexiones más lentas)
