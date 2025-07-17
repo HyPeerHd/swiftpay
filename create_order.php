@@ -14,7 +14,7 @@ if (isset($_GET['test'])) {
 // create_order.php - Crear nuevo pedido
 require_once 'config.php';
 
-if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+if ($_SERVER['REQUEST_METHOD'] !== 'OPTIONS') {
     http_response_code(405);
     echo json_encode(['success' => false, 'message' => 'Method not allowed']);
     exit;
