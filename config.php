@@ -14,11 +14,21 @@ error_reporting(E_ALL);
 ini_set('display_errors', 1);
 
 // Headers para CORS y JSON
-header('Access-Control-Allow-Origin: *');
-header('Access-Control-Allow-Methods: POST, GET, OPTIONS');
-header('Access-Control-Allow-Headers: Content-Type');
-header('Content-Type: application/json; charset=utf-8');
+if (isset($_SERVER['HTTP_ORIGIN'])) {
+    header("Access-Control-Allow-Origin: {$_SERVER['HTTP_ORIGIN']}");
+    header("Vary: Origin");
+    header("Access-Control-Allow-Credentials: true");
+    header("Access-Control-Max-Age: 86400");
+}
 
+if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
+    header("Access-Control-Allow-Methods: GET, POST, OPTIONS");
+    header("Access-Control-Allow-Headers: Content-Type, Authorization, X-Requested-With");
+    http_response_code(204);
+    exit;
+}
+
+header('Content-Type: application/json; charset=utf-8');
 // Configuración de la base de datos
 $host = 'localhost';
 $dbname = 'swiftpay';
