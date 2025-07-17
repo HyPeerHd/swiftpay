@@ -1,132 +1,80 @@
 <?php
-// bitcoin_verify.php - Verificación de pagos Bitcoin
-require_once 'config.php';
+// config.php — Configuración y manejo CORS
 
-function verifyBitcoinPayment($address, $expectedAmount, $timeFrom, $orderId) {
-    global $apis, $payment_tolerance;
-    
-    try {
-        // Obtener transacciones de la dirección
-        $url = $apis['bitcoin'] . "address/$address/txs";
-        $response = makeHttpRequest($url);
-        $transactions = json_decode($response, true);
-        
-        if (!$transactions || !is_array($transactions)) {
-            logTransaction($orderId, "No transactions found or invalid response from API", 'WARNING');
-            return false;
-        }
-        
-        $totalReceived = 0;
-        $validTransactions = [];
-        
-        foreach ($transactions as $tx) {
-            // Solo procesar transacciones confirmadas y después del tiempo especificado
-            if (!$tx['status']['confirmed'] || !isset($tx['status']['block_time'])) {
-                continue;
-            }
-            
-            if ($tx['status']['block_time'] < $timeFrom) {
-                continue;
-            }
-            
-            // Verificar outputs para encontrar pagos a nuestra dirección
-            foreach ($tx['vout'] as $output) {
-                if (isset($output['scriptpubkey_address']) && $output['scriptpubkey_address'] === $address) {
-                    $receivedAmount = $output['value'] / 100000000; // Convertir de satoshis a BTC
-                    $totalReceived += $receivedAmount;
-                    
-                    $validTransactions[] = [
-                        'txid' => $tx['txid'],
-                        'amount' => $receivedAmount,
-                        'time' => $tx['status']['block_time'],
-                        'confirmations' => $tx['status']['confirmed'] ? 1 : 0
-                    ];
-                }
-            }
-        }
-        
-        logTransaction($orderId, "Bitcoin verification - Expected: $expectedAmount BTC, Received: $totalReceived BTC");
-        
-        // Verificar si el monto total recibido es igual o mayor al esperado
-        // Usamos tolerancia mínima para forzar exactitud
-        if ($totalReceived >= $expectedAmount && 
-            abs($totalReceived - $expectedAmount) <= $payment_tolerance['bitcoin']) {
-            
-            return [
-                'success' => true,
-                'txid' => $validTransactions[0]['txid'] ?? '',
-                'amount' => $totalReceived,
-                'expected' => $expectedAmount,
-                'confirmations' => $validTransactions[0]['confirmations'] ?? 0,
-                'transactions' => $validTransactions
-            ];
-        }
-        
-        // Si el pago es insuficiente, log detallado
-        if ($totalReceived < $expectedAmount) {
-            $shortfall = $expectedAmount - $totalReceived;
-            logTransaction($orderId, "Bitcoin payment insufficient - Shortfall: $shortfall BTC", 'WARNING');
-        }
-        
-        return false;
-        
-    } catch (Exception $e) {
-        logTransaction($orderId, "Bitcoin verification error: " . $e->getMessage(), 'ERROR');
-        return false;
-    }
+error_reporting(E_ALL);
+ini_set('display_errors', 1);
+
+// Permitir solicitudes desde la misma origen o Tor browser
+if (isset($_SERVER['HTTP_ORIGIN'])) {
+    header("Access-Control-Allow-Origin: {$_SERVER['HTTP_ORIGIN']}");
+    header("Vary: Origin");
+    header("Access-Control-Allow-Credentials: true");
+    header("Access-Control-Allow-Methods: GET, POST, OPTIONS");
+    header("Access-Control-Allow-Headers: Content-Type, Authorization, X-Requested-With");
 }
 
-// Endpoint para verificar pago
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $input = json_decode(file_get_contents('php://input'), true);
-    
-    if (!$input || !isset($input['orderId'], $input['amount'], $input['address'], $input['timeFrom'])) {
-        http_response_code(400);
-        echo json_encode(['success' => false, 'message' => 'Missing required parameters']);
-        exit;
-    }
-    
-    $orderId = $input['orderId'];
-    $expectedAmount = floatval($input['amount']);
-    $address = $input['address'];
-    $timeFrom = intval($input['timeFrom']);
-    
-    // Verificar que la orden existe y está pendiente
-    $stmt = $pdo->prepare("SELECT * FROM orders WHERE order_id = ? AND status = 'pending'");
-    $stmt->execute([$orderId]);
-    $order = $stmt->fetch();
-    
-    if (!$order) {
-        echo json_encode(['success' => false, 'message' => 'Order not found or already processed']);
-        exit;
-    }
-    
-    $result = verifyBitcoinPayment($address, $expectedAmount, $timeFrom, $orderId);
-    
-    if ($result && $result['success']) {
-        // Actualizar estado del pedido en la base de datos
-        $stmt = $pdo->prepare("
-            UPDATE orders 
-            SET status = 'paid', txid = ?, paid_amount = ?, confirmed_at = NOW() 
-            WHERE order_id = ?
-        ");
-        $stmt->execute([$result['txid'], $result['amount'], $orderId]);
-        
-        logTransaction($orderId, "Bitcoin payment confirmed - TXID: " . $result['txid']);
-        
-        echo json_encode([
-            'success' => true, 
-            'data' => $result,
-            'message' => 'Payment verified and confirmed'
-        ]);
-    } else {
-        echo json_encode([
-            'success' => false, 
-            'message' => 'Payment not found or amount incorrect. Please ensure you send the exact amount.'
-        ]);
-    }
-} else {
-    http_response_code(405);
-    echo json_encode(['success' => false, 'message' => 'Method not allowed']);
+// Responder preflight CORS antes que cualquier otra lógica
+if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
+    http_response_code(204);
+    exit;
 }
-?>
+
+// JSON como contenido por defecto
+header('Content-Type: application/json; charset=utf-8');
+
+// Configuración de tiempo para Tor
+ini_set('default_socket_timeout', 60);
+set_time_limit(120);
+
+// Conexión PDO a la base de datos
+$host = 'localhost';
+$dbname = 'swiftpay';
+$username = 'hyperhd';
+$password = 'chikihyper666';
+
+try {
+    $dsn = "mysql:host=$host;dbname=$dbname;charset=utf8mb4";
+    $options = [
+        PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
+        PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+        PDO::ATTR_EMULATE_PREPARES => false,
+        PDO::ATTR_PERSISTENT => true,
+        PDO::MYSQL_ATTR_INIT_COMMAND => "SET NAMES utf8mb4"
+    ];
+    $pdo = new PDO($dsn, $username, $password, $options);
+} catch (PDOException $e) {
+    http_response_code(500);
+    echo json_encode(['success' => false, 'message' => 'DB connection failed: ' . $e->getMessage()]);
+    exit;
+}
+
+// Configuración de wallets y tolerancia de pago
+$wallets = [
+    'bitcoin' => 'bc1q35afylzfkw7msxdh8459avwcdl653ga9f540cs',
+    'monero' => '4AdUndXHHZ6cfufTMvppY6JwXNouMBzSkbLYfpAV5Usx3skxNgYeYTRJ5LkBArVP7oxLLds7LvBpYwVNHt8bQZDJKJKGd'
+];
+$apis = [
+    'bitcoin' => 'https://blockstream.info/api/',
+    'monero' => 'https://xmrchain.net/api/'
+];
+$payment_tolerance = [
+    'bitcoin' => 0.00000001,
+    'monero' => 0.000000001
+];
+
+// Función para peticiones HTTP
+function makeHttpRequest($url, $timeout = 60) {
+    $ctx = stream_context_create([
+        'http' => ['timeout' => $timeout, 'user_agent' => 'SwiftPay/1.0', 'follow_location' => true],
+        'ssl' => ['verify_peer' => false, 'verify_peer_name' => false]
+    ]);
+    $resp = @file_get_contents($url, false, $ctx);
+    if ($resp === false) throw new Exception("HTTP request failed: $url");
+    return $resp;
+}
+
+// Función de logging
+function logTransaction($orderId, $message, $level = 'INFO') {
+    $ts = date('Y-m-d H:i:s');
+    error_log("[$ts] [$level] Order $orderId – $message\n", 3, 'transactions.log');
+}
