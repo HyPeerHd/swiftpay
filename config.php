@@ -1,41 +1,37 @@
 <?php
-// Configuración específica para Tor
-//if (isset($_SERVER['HTTP_X_FORWARDED_PROTO']) && $_SERVER['HTTP_X_FORWARDED_PROTO'] === 'https') {
-//    $_SERVER['HTTPS'] = 'on';
-//}
+// config.php — Configuración y manejo CORS
 
-
-// Configuración de tiempo para Tor (conexiones más lentas)
-ini_set('default_socket_timeout', 60);
-set_time_limit(120);
-
-// config.php - Configuración del sistema
 error_reporting(E_ALL);
 ini_set('display_errors', 1);
 
-// Headers para CORS y JSON
+// Permitir solicitudes desde la misma origen o Tor browser
 if (isset($_SERVER['HTTP_ORIGIN'])) {
     header("Access-Control-Allow-Origin: {$_SERVER['HTTP_ORIGIN']}");
     header("Vary: Origin");
     header("Access-Control-Allow-Credentials: true");
-    header("Access-Control-Max-Age: 86400");
-}
-
-if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
     header("Access-Control-Allow-Methods: GET, POST, OPTIONS");
     header("Access-Control-Allow-Headers: Content-Type, Authorization, X-Requested-With");
+}
+
+// Responder preflight CORS antes que cualquier otra lógica
+if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
     http_response_code(204);
     exit;
 }
 
+// JSON como contenido por defecto
 header('Content-Type: application/json; charset=utf-8');
-// Configuración de la base de datos
+
+// Configuración de tiempo para Tor
+ini_set('default_socket_timeout', 60);
+set_time_limit(120);
+
+// Conexión PDO a la base de datos
 $host = 'localhost';
 $dbname = 'swiftpay';
-$username = 'hyperhd';  // Cambiar por mi usuario real
-$password = 'chikihyper666'; // Cambiar por mi password real
+$username = 'hyperhd';
+$password = 'chikihyper666';
 
-// Conexión PDO optimizada
 try {
     $dsn = "mysql:host=$host;dbname=$dbname;charset=utf8mb4";
     $options = [
@@ -43,65 +39,42 @@ try {
         PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
         PDO::ATTR_EMULATE_PREPARES => false,
         PDO::ATTR_PERSISTENT => true,
-        PDO::MYSQL_ATTR_INIT_COMMAND => "SET NAMES utf8mb4",
-        PDO::MYSQL_ATTR_SSL_VERIFY_SERVER_CERT => false,
-        PDO::MYSQL_ATTR_SSL_CA => false
+        PDO::MYSQL_ATTR_INIT_COMMAND => "SET NAMES utf8mb4"
     ];
     $pdo = new PDO($dsn, $username, $password, $options);
 } catch (PDOException $e) {
     http_response_code(500);
-    echo json_encode(['success' => false, 'message' => 'Database connection failed: ' . $e->getMessage()]);
+    echo json_encode(['success' => false, 'message' => 'DB connection failed: ' . $e->getMessage()]);
     exit;
 }
 
-// Direcciones de wallets (usar mis direcciones reales)
+// Configuración de wallets y tolerancia de pago
 $wallets = [
     'bitcoin' => 'bc1q35afylzfkw7msxdh8459avwcdl653ga9f540cs',
     'monero' => '4AdUndXHHZ6cfufTMvppY6JwXNouMBzSkbLYfpAV5Usx3skxNgYeYTRJ5LkBArVP7oxLLds7LvBpYwVNHt8bQZDJKJKGd'
 ];
-
-// APIs para verificación de blockchain
 $apis = [
     'bitcoin' => 'https://blockstream.info/api/',
     'monero' => 'https://xmrchain.net/api/'
 ];
-
-// Tolerancia para pagos (muy baja para forzar exactitud)
 $payment_tolerance = [
-    'bitcoin' => 0.00000001, // 1 satoshi
-    'monero' => 0.000000001  // 1 piconero convertido
+    'bitcoin' => 0.00000001,
+    'monero' => 0.000000001
 ];
 
-// Función para hacer peticiones HTTP optimizada
+// Función para peticiones HTTP
 function makeHttpRequest($url, $timeout = 60) {
-    $context = stream_context_create([
-        'http' => [
-            'timeout' => $timeout,
-            'user_agent' => 'Mozilla/5.0 (compatible; SwiftPay/1.0)',
-            'follow_location' => true,
-            'max_redirects' => 3,
-            'ignore_errors' => true
-        ],
-        'ssl' => [
-            'verify_peer' => false,
-            'verify_peer_name' => false,
-            'allow_self_signed' => true
-        ]
+    $ctx = stream_context_create([
+        'http' => ['timeout' => $timeout, 'user_agent' => 'SwiftPay/1.0', 'follow_location' => true],
+        'ssl' => ['verify_peer' => false, 'verify_peer_name' => false]
     ]);
-    
-    $response = @file_get_contents($url, false, $context);
-    
-    if ($response === false) {
-        throw new Exception("Failed to connect to API: $url");
-    }
-    
-    return $response;
+    $resp = @file_get_contents($url, false, $ctx);
+    if ($resp === false) throw new Exception("HTTP request failed: $url");
+    return $resp;
 }
 
-// Función para logging optimizado
+// Función de logging
 function logTransaction($orderId, $message, $level = 'INFO') {
-    $timestamp = date('Y-m-d H:i:s');
-    $logEntry = "[$timestamp] [$level] Order: $orderId - $message\n";
-    error_log($logEntry, 3, 'transactions.log');
+    $ts = date('Y-m-d H:i:s');
+    error_log("[$ts] [$level] Order $orderId – $message\n", 3, 'transactions.log');
 }
-?>
